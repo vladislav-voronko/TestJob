@@ -226,5 +226,5 @@ TestJob/
 
 TestJob.Tests/
 ├── ResponseFactoryTests.cs
-└── UnitTest1.cs        # Validator tests
+└── TestJobValidatorTests.cs        # Validator tests
 ```

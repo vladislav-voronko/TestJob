@@ -10,11 +10,11 @@ namespace TestJob.Controllers
     [ApiController]
 
     [Route("api/testJob")]
-    public class TestJobContoller : ControllerBase
+    public class TestJobController : ControllerBase
     {
         private readonly ITestJobService _testJobService;
         private readonly IValidator<TestJobRequest> _validator;
-        public TestJobContoller(ITestJobService testJobService, IValidator<TestJobRequest> validator)
+        public TestJobController(ITestJobService testJobService, IValidator<TestJobRequest> validator)
         {
             _testJobService = testJobService;
             _validator = validator;
@@ -49,7 +49,7 @@ namespace TestJob.Controllers
                         errorMessage));
             }
 
-            var response = await _testJobService.Parse(model, cancellationToken);
+            var response = await _testJobService.ProcessAsync(model, cancellationToken);
 
             if (response.IsError == 0)
             {

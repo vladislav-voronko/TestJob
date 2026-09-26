@@ -1,4 +1,5 @@
 ﻿using AngleSharp.Html.Parser;
+using AngleSharp.Dom;
 using Dapper;
 using Npgsql;
 using System.Security.Cryptography;
@@ -22,7 +23,7 @@ namespace TestJob.Services
             _configuration = configuration;
         }
 
-        public async Task<TestJobResponse> Parse(TestJobRequest model, CancellationToken cancellationToken)
+        public async Task<TestJobResponse> ProcessAsync(TestJobRequest model, CancellationToken cancellationToken)
         {
             if (!TryDecodeBase64(model.UrlBase64!, out var urlBytes))
             {
@@ -47,18 +48,33 @@ namespace TestJob.Services
 
             var selectedElements = document.QuerySelectorAll(model.Selector!);
 
-            var attributeValues = new List<string>();
+            var emails = ExtractEmailsFromHtml(decodedPage);
 
-            foreach (var element in selectedElements)
+            if (!TryDecryptAes256Ecb(
+                model.EncryptedTextBytesBase64!, model.KeyBytesBase64!, out var decryptedText, out var errorCode, out var errorMessage))
             {
-                var attributeValue = element.GetAttribute(model.Attribute!);
-
-                if (attributeValue != null)
-                {
-                    attributeValues.Add(attributeValue);
-                }
+                return TestJobResponseFactory.Error(errorCode, errorMessage);
             }
 
+            var attributeValues = await SaveElementsAsync(
+                selectedElements,
+                model.Attribute!,
+                cancellationToken);
+
+            return TestJobResponseFactory.Success(
+                selectedElements.Length,
+                emails.Count,
+                decodedUrl,
+                decryptedText,
+                attributeValues,
+                emails);
+        }
+
+        private async Task<List<string>> SaveElementsAsync(
+            IEnumerable<IElement> selectedElements,
+            string attributeName,
+            CancellationToken cancellationToken)
+        {
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
 
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -81,7 +97,11 @@ namespace TestJob.Services
                 );
                 """;
 
-            await connection.ExecuteAsync(new CommandDefinition(createTableSql, transaction: transaction, cancellationToken: cancellationToken));
+            await connection.ExecuteAsync(
+                new CommandDefinition(
+                    createTableSql,
+                    transaction: transaction,
+                    cancellationToken: cancellationToken));
 
             const string insertElementSql = """
                 INSERT INTO elements
@@ -96,46 +116,34 @@ namespace TestJob.Services
                 );
                 """;
 
+            var attributeValues = new List<string>();
+
             foreach (var element in selectedElements)
             {
-                var attributeValue = element.GetAttribute(model.Attribute!);
+                var attributeValue = element.GetAttribute(attributeName);
 
                 if (attributeValue is null)
                 {
                     continue;
                 }
 
-                var parameters = new
-                {
-                    Attribute = attributeValue,
-                    HtmlContent = element.OuterHtml
-                };
+                attributeValues.Add(attributeValue);
 
                 await connection.ExecuteAsync(
                     new CommandDefinition(
                         insertElementSql,
-                        parameters,
+                        new
+                        {
+                            Attribute = attributeValue,
+                            HtmlContent = element.OuterHtml
+                        },
                         transaction: transaction,
                         cancellationToken: cancellationToken));
             }
 
             await transaction.CommitAsync(cancellationToken);
 
-            var emails = ExtractEmailsFromHtml(decodedPage);
-
-            if (!TryDecryptAes256Ecb(
-                model.EncryptedTextBytesBase64!, model.KeyBytesBase64!, out var decryptedText, out var errorCode, out var errorMessage))
-            {
-                return TestJobResponseFactory.Error(errorCode, errorMessage);
-            }
-
-            return TestJobResponseFactory.Success(
-                selectedElements.Length,
-                emails.Count,
-                decodedUrl,
-                decryptedText,
-                attributeValues,
-                emails);
+            return attributeValues;
         }
 
         private static bool TryDecodeBase64(string value, out byte[] result)
@@ -167,36 +175,14 @@ namespace TestJob.Services
             errorCode = string.Empty;
             errorMessage = string.Empty;
 
-            if (!TryDecodeBase64(keyBase64, out var key))
+            if (!TryPrepareAesData(
+                    encryptedTextBase64,
+                    keyBase64,
+                    out var encryptedText,
+                    out var key,
+                    out errorCode,
+                    out errorMessage))
             {
-                errorCode = TestJobErrorCodes.InvalidKeyBase64;
-                errorMessage = "Parameter 'key_bytes_b64' contains invalid Base64 data.";
-
-                return false;
-            }
-
-            if (key.Length != 32)
-            {
-                errorCode = TestJobErrorCodes.InvalidAesKey;
-                errorMessage = "AES-256 key must contain exactly 32 bytes.";
-
-                return false;
-            }
-
-            if (!TryDecodeBase64(encryptedTextBase64, out var encryptedText))
-            {
-                errorCode = TestJobErrorCodes.InvalidEncryptedTextBase64;
-                errorMessage = "Parameter 'encrypted_text_bytes_b64' contains invalid Base64 data.";
-
-                return false;
-            }
-
-            if (encryptedText.Length == 0 ||
-                encryptedText.Length % 16 != 0)
-            {
-                errorCode = TestJobErrorCodes.InvalidEncryptedTextLength;
-                errorMessage = "Encrypted text length must be a non-zero multiple of 16 bytes.";
-
                 return false;
             }
 
@@ -228,6 +214,58 @@ namespace TestJob.Services
 
                 return false;
             }
+        }
+
+        private static bool TryPrepareAesData(
+            string encryptedTextBase64,
+            string keyBase64,
+            out byte[] encryptedText,
+            out byte[] key,
+            out string errorCode,
+            out string errorMessage)
+        {
+            encryptedText = [];
+            key = [];
+            errorCode = string.Empty;
+            errorMessage = string.Empty;
+
+            if (!TryDecodeBase64(keyBase64, out key))
+            {
+                errorCode = TestJobErrorCodes.InvalidKeyBase64;
+                errorMessage =
+                    "Parameter 'key_bytes_b64' contains invalid Base64 data.";
+
+                return false;
+            }
+
+            if (key.Length != 32)
+            {
+                errorCode = TestJobErrorCodes.InvalidAesKey;
+                errorMessage = "AES-256 key must contain exactly 32 bytes.";
+
+                return false;
+            }
+
+            if (!TryDecodeBase64(encryptedTextBase64, out encryptedText))
+            {
+                errorCode = TestJobErrorCodes.InvalidEncryptedTextBase64;
+                errorMessage =
+                    "Parameter 'encrypted_text_bytes_b64' contains invalid Base64 data.";
+
+                return false;
+            }
+
+            if (encryptedText.Length == 0 ||
+                encryptedText.Length % 16 != 0)
+            {
+                errorCode = TestJobErrorCodes.InvalidEncryptedTextLength;
+                errorMessage =
+                    "Encrypted text length must be a non-zero multiple of 16 bytes.";
+
+                return false;
+            }
+
+            return true;
         }
     }
 }

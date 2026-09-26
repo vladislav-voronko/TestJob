@@ -4,6 +4,6 @@ namespace TestJob.Interfaces
 {
     public interface ITestJobService
     {
-        public Task<TestJobResponse> Parse(TestJobRequest model, CancellationToken cancellationToken);
+        public Task<TestJobResponse> ProcessAsync(TestJobRequest model, CancellationToken cancellationToken);
     }
 }
