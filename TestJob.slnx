@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="compose.yml" />
+    <File Path="json_result_1.txt" />
+    <File Path="json_result_2.txt" />
+  </Folder>
+  <Folder Name="/Solution Items/pgadmin/">
+    <File Path=".pgpass" />
+    <File Path="servers.json" />
+  </Folder>
+  <Project Path="TestJob.Tests/TestJob.Tests.csproj" Id="dac9ccdb-49ea-499b-9629-350dbbfc89b2" />
+  <Project Path="TestJob/TestJob.csproj" />
+</Solution>

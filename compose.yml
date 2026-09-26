@@ -1,0 +1,61 @@
+
+services:
+  api:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    container_name: testjob-api
+    working_dir: /src
+    volumes:
+      - ./:/src
+    command: >
+      sh -c "dotnet restore ./TestJob/TestJob.csproj &&
+             dotnet build ./TestJob/TestJob.csproj --no-restore &&
+             dotnet run --project ./TestJob/TestJob.csproj --no-build --urls http://0.0.0.0:8090"
+    ports:
+      - "8090:8090"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://0.0.0.0:8090
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=appdb;Username=appuser"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    container_name: test-postgres
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      PGDATA: /var/lib/postgresql/18/docker
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: test-pgadmin
+    ports:
+      - "8080:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: adminpassword
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./pgadmin/.pgpass:/pgadmin4/pgpass:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
